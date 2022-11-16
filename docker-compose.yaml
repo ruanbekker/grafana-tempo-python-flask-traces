@@ -1,0 +1,97 @@
+version: '3.8'
+
+services:
+  web-application:
+    container_name: web-application
+    build: .
+    labels:
+      logging: "promtail"
+      logging_jobname: "containerlogs"
+    environment:
+      - AGENT_HOSTNAME=tempo
+      - AGENT_PORT=4317
+    ports:
+      - 5000:5000
+    depends_on:
+      - grafana
+    networks:
+      - app
+
+  nginx-app:
+    container_name: nginx-app
+    image: nginx
+    labels:
+      logging: "promtail"
+      logging_jobname: "containerlogs"
+    ports:
+      - 8080:80
+    networks:
+      - app
+
+  tempo:
+    container_name: tempo
+    image: grafana/tempo:1.5.0
+    command: [ "-config.file=/etc/tempo.yaml" ]
+    volumes:
+      - ./config/tempo/config-local.yaml:/etc/tempo.yaml
+    depends_on:
+      - prometheus
+    networks:
+      - app
+
+  grafana:
+    image: grafana/grafana:9.2.4
+    ports:
+      - 3000:3000
+    volumes:
+      # https://github.com/grafana/tempo/blob/main/example/docker-compose/tempo-search/grafana.ini
+      - ./config/grafana/grafana.ini:/etc/grafana/grafana.ini
+      - ./config/grafana/datasources.yaml:/etc/grafana/provisioning/datasources/datasources.yaml
+    environment:
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+      - GF_AUTH_DISABLE_LOGIN_FORM=true
+    depends_on:
+      - tempo
+      - loki
+      - prometheus
+    networks:
+      - app
+
+  loki:
+    image: grafana/loki:2.7.0
+    ports:
+      - 3100:3100
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - app
+
+  promtail:
+    image:  grafana/promtail:2.7.0
+    container_name: promtail
+    volumes:
+      - ./config/promtail/promtail.yaml:/etc/promtail/docker-config.yaml
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: -config.file=/etc/promtail/docker-config.yaml
+    depends_on:
+      - loki
+    networks:
+      - app
+
+  prometheus:
+    image: prom/prometheus:v2.40.1
+    command:
+      - --config.file=/etc/prometheus.yaml
+      - --web.enable-remote-write-receiver
+      - --enable-feature=exemplar-storage
+    volumes:
+      - ./config/prometheus/prometheus.yaml:/etc/prometheus.yaml
+    ports:
+      - 9090:9090
+    networks:
+      - app
+
+networks:
+  app:
+    name: app
